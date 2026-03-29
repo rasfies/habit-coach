@@ -70,7 +70,7 @@ export interface Database {
       groups: {
         Row: import("./types").Group;
         Insert: import("./types").GroupInsert;
-        Update: import("./types").GroupUpdate;
+        Update: import("./types").GroupUpdate; // includes member_count and is_active
       };
       group_members: {
         Row: import("./types").GroupMember;

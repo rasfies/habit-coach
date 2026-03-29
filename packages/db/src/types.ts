@@ -70,6 +70,7 @@ export interface Group {
   invite_code: string;
   created_by: string;
   member_count: number;
+  is_active: boolean; // soft delete flag — false when last member leaves
   created_at: string;
   updated_at: string;
 }
@@ -132,7 +133,7 @@ export type HabitLogInsert = Omit<HabitLog, "id" | "created_at">;
 
 export type StreakInsert = Omit<Streak, "id" | "updated_at">;
 
-export type GroupInsert = Omit<Group, "id" | "created_at" | "updated_at" | "member_count">;
+export type GroupInsert = Omit<Group, "id" | "created_at" | "updated_at" | "member_count" | "is_active">;
 
 export type GroupMemberInsert = Omit<GroupMember, "id" | "joined_at">;
 
@@ -158,6 +159,6 @@ export type StreakUpdate = Partial<
   Pick<Streak, "current_streak" | "longest_streak" | "grace_days_used_this_week" | "last_completed_date" | "last_streak_reset">
 >;
 
-export type GroupUpdate = Partial<Pick<Group, "name">>;
+export type GroupUpdate = Partial<Pick<Group, "name" | "member_count" | "is_active">>;
 
 export type NotificationTokenUpdate = Partial<Pick<NotificationToken, "is_active">>;
