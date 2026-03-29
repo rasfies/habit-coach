@@ -1,0 +1,6 @@
+{
+  "buildCommand": "turbo run build --filter=@habit-coach/web",
+  "outputDirectory": "apps/web/.next",
+  "installCommand": "npm install",
+  "framework": null
+}
