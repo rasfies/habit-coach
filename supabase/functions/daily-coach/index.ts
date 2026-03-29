@@ -1,298 +1,241 @@
-// supabase/functions/daily-coach/index.ts
-// Deno Edge Function — runs at 23:00 UTC daily via pg_cron
-// Generates tomorrow's AI coaching messages for all users who have habits.
+/**
+ * Supabase Edge Function: daily-coach
+ * Runtime: Deno
+ *
+ * Schedule: nightly via pg_cron (e.g., "0 2 * * *" = 02:00 UTC)
+ *
+ * For each active user:
+ * 1. Fetches their active habits + recent logs + current streaks
+ * 2. Generates a daily coaching message via Claude Haiku
+ * 3. Stores the message in ai_messages for tomorrow's date
+ * 4. Sends push notification if the user has an active token
+ *
+ * Invoked by the Supabase scheduler:
+ *   SELECT cron.schedule('daily-coach', '0 2 * * *', $$SELECT net.http_post(...)$$);
+ */
 
-import { serve } from 'https://deno.land/std@0.168.0/http/server.ts'
-import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import Anthropic from "https://esm.sh/@anthropic-ai/sdk@0.36.3";
 
-const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
-const MODEL = 'claude-haiku-4-5-20251001'
-const MAX_TOKENS = 600
+const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const anthropicApiKey = Deno.env.get("ANTHROPIC_API_KEY")!;
 
-interface Habit {
-  id: string
-  name: string
-  description: string | null
-  frequency: string
+const supabase = createClient(supabaseUrl, serviceRoleKey, {
+  auth: { persistSession: false },
+});
+
+const anthropic = new Anthropic({ apiKey: anthropicApiKey });
+
+const MODEL = "claude-haiku-4-5-20251001";
+const MAX_TOKENS = 200;
+
+interface HabitWithStreakAndLogs {
+  id: string;
+  name: string;
+  current_streak: number;
+  longest_streak: number;
+  days_completed_last_7: number;
+  completed_today: boolean;
 }
 
-interface HabitLog {
-  habit_id: string
-  log_date: string
-}
-
-interface Streak {
-  habit_id: string
-  current_streak: number
-  longest_streak: number
-  grace_days_used_this_week: number
-}
-
-interface User {
-  id: string
-  email: string
-  full_name: string | null
-}
-
-// ─── Authorization check ──────────────────────────────────────────────────────
-// This function is called by pg_cron using the service role key.
-// verify_jwt = true in config.toml so the Authorization header must be present.
-function isAuthorized(req: Request): boolean {
-  const authHeader = req.headers.get('Authorization')
-  if (!authHeader) return false
-  // pg_cron passes the service role key as a Bearer token
-  const token = authHeader.replace('Bearer ', '').trim()
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-  return token === serviceRoleKey
-}
-
-// ─── Prompt builder ───────────────────────────────────────────────────────────
-function buildCoachingPrompt(
-  user: User,
-  habits: Habit[],
-  streaks: Streak[],
-  recentLogs: HabitLog[],
-  targetDate: string,
-): string {
-  const name = user.full_name?.split(' ')[0] ?? 'there'
-
-  // Build per-habit context
-  const habitContext = habits.map((habit) => {
-    const streak = streaks.find((s) => s.habit_id === habit.id)
-    const logsThisWeek = recentLogs.filter((l) => l.habit_id === habit.id).length
-    const currentStreak = streak?.current_streak ?? 0
-    const longestStreak = streak?.longest_streak ?? 0
-
-    let streakNote = `${currentStreak}-day streak`
-    if (currentStreak >= 30) streakNote += ' (incredible — 30+ days!)'
-    else if (currentStreak >= 14) streakNote += ' (two weeks strong!)'
-    else if (currentStreak >= 7) streakNote += ' (one week!)'
-    else if (currentStreak >= 3) streakNote += ' (getting momentum!)'
-
-    return `- ${habit.name}: ${streakNote}, ${logsThisWeek}/7 days this week, longest ever: ${longestStreak} days`
-  }).join('\n')
-
-  const totalCurrentStreak = streaks.reduce((sum, s) => sum + s.current_streak, 0)
-  const isMilestone = streaks.some((s) =>
-    [3, 7, 14, 30, 60, 90, 180, 365].includes(s.current_streak),
-  )
-
-  const messageStyle = isMilestone
-    ? 'This is a MILESTONE day — write an extra celebratory and energizing message.'
-    : 'Write a warm, encouraging daily check-in message.'
-
-  return `You are a compassionate AI habit coach. ${messageStyle}
-
-User: ${name}
-Date: ${targetDate}
-Habits being tracked:
-${habitContext}
-
-Write a personalized coaching message (150-250 words) that:
-1. Addresses ${name} by name
-2. References their specific habit names (not generic "your habits")
-3. Acknowledges their current streak progress
-4. Gives one concrete, actionable tip for tomorrow
-5. Ends with a short motivational close
-
-Tone: warm, personal, not preachy. Avoid generic platitudes.
-Do not include a subject line or greeting prefix — start directly with the message content.`
-}
-
-// ─── Anthropic API call ───────────────────────────────────────────────────────
-async function generateCoachingMessage(prompt: string): Promise<string> {
-  const apiKey = Deno.env.get('ANTHROPIC_API_KEY')
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY not set')
-
-  const response = await fetch(ANTHROPIC_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      max_tokens: MAX_TOKENS,
-      messages: [{ role: 'user', content: prompt }],
-    }),
-  })
-
-  if (!response.ok) {
-    const error = await response.text()
-    throw new Error(`Anthropic API error ${response.status}: ${error}`)
+async function generateMessage(
+  displayName: string,
+  habits: HabitWithStreakAndLogs[]
+): Promise<{ text: string; inputTokens: number; outputTokens: number }> {
+  if (habits.length === 0) {
+    return {
+      text: `Hi ${displayName}! Add some habits to get started on your journey.`,
+      inputTokens: 0,
+      outputTokens: 0,
+    };
   }
 
-  const data = await response.json()
-  return data.content[0].text as string
+  const habitSummary = habits
+    .map(
+      (h) =>
+        `- "${h.name}": ${h.current_streak}-day streak, ${h.days_completed_last_7}/7 days last week`
+    )
+    .join("\n");
+
+  const highestStreak = Math.max(...habits.map((h) => h.current_streak));
+  const topHabit = habits.find((h) => h.current_streak === highestStreak);
+  const nextMilestone = [3, 7, 14, 30].find((m) => m > highestStreak);
+
+  const prompt = `You are a warm, personal habit coach. Write a daily coaching message for ${displayName}.
+
+Their habit progress (last 7 days):
+${habitSummary}
+
+${nextMilestone && topHabit ? `Streak context: ${nextMilestone - highestStreak} day(s) until the ${nextMilestone}-day milestone for "${topHabit.name}".` : ""}
+
+Rules:
+- 2-4 sentences maximum
+- Reference their specific habit names
+- Be encouraging but direct — not generic
+- No clichés like "Great job!" or "Keep it up!"
+- This message will be read tomorrow morning`;
+
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: MAX_TOKENS,
+    messages: [{ role: "user", content: prompt }],
+  });
+
+  const content = response.content[0];
+  if (content.type !== "text") throw new Error("Unexpected Claude response type");
+
+  return {
+    text: content.text,
+    inputTokens: response.usage.input_tokens,
+    outputTokens: response.usage.output_tokens,
+  };
 }
 
-// ─── Main handler ─────────────────────────────────────────────────────────────
-serve(async (req: Request) => {
-  // Only accept POST requests
-  if (req.method !== 'POST') {
-    return new Response('Method Not Allowed', { status: 405 })
-  }
-
-  // Verify authorization
-  if (!isAuthorized(req)) {
-    return new Response('Unauthorized', { status: 401 })
-  }
-
-  const supabaseUrl = Deno.env.get('SUPABASE_URL')
-  const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-
-  if (!supabaseUrl || !serviceRoleKey) {
-    return new Response('Server configuration error', { status: 500 })
-  }
-
-  // Use service role client to bypass RLS for cron operations
-  const supabase = createClient(supabaseUrl, serviceRoleKey)
-
-  // Target date is tomorrow (messages generated night before)
-  const tomorrow = new Date()
-  tomorrow.setUTCDate(tomorrow.getUTCDate() + 1)
-  const targetDate = tomorrow.toISOString().split('T')[0]
-
-  // Seven days ago for recent log context
-  const sevenDaysAgo = new Date()
-  sevenDaysAgo.setUTCDate(sevenDaysAgo.getUTCDate() - 7)
-  const weekAgo = sevenDaysAgo.toISOString().split('T')[0]
-
-  let processed = 0
-  let errors = 0
-
+async function sendPushNotification(
+  token: string,
+  message: string
+): Promise<void> {
+  // Expo Push Notification API
   try {
-    // Get all users who have at least one active habit
-    const { data: usersWithHabits, error: usersError } = await supabase
-      .from('habits')
-      .select('user_id')
-      .eq('archived', false)
+    await fetch("https://exp.host/--/api/v2/push/send", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Accept: "application/json",
+      },
+      body: JSON.stringify({
+        to: token,
+        title: "Your Daily Coach",
+        body: message.slice(0, 150),
+        sound: "default",
+      }),
+    });
+  } catch (err) {
+    console.error(`Push notification failed for token ${token}:`, err);
+  }
+}
 
-    if (usersError) throw usersError
+Deno.serve(async (_req) => {
+  try {
+    const tomorrow = new Date();
+    tomorrow.setUTCDate(tomorrow.getUTCDate() + 1);
+    const tomorrowStr = tomorrow.toISOString().slice(0, 10);
+    const today = new Date().toISOString().slice(0, 10);
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setUTCDate(sevenDaysAgo.getUTCDate() - 7);
+    const sevenDaysAgoStr = sevenDaysAgo.toISOString().slice(0, 10);
 
-    // Deduplicate user IDs
-    const userIds = [...new Set(usersWithHabits?.map((r: { user_id: string }) => r.user_id) ?? [])]
+    // Fetch all active users
+    const { data: users, error: usersError } = await supabase
+      .from("users")
+      .select("id, display_name, notification_enabled");
 
-    for (const userId of userIds) {
+    if (usersError) throw usersError;
+
+    let processed = 0;
+    let errors = 0;
+
+    for (const user of users ?? []) {
       try {
-        // Fetch user profile
-        const { data: userRow, error: userError } = await supabase
-          .from('users')
-          .select('id, email, full_name')
-          .eq('id', userId)
-          .single()
-
-        if (userError || !userRow) continue
-
-        // Fetch active habits
-        const { data: habits, error: habitsError } = await supabase
-          .from('habits')
-          .select('id, name, description, frequency')
-          .eq('user_id', userId)
-          .eq('archived', false)
-
-        if (habitsError || !habits?.length) continue
-
-        const habitIds = habits.map((h: Habit) => h.id)
-
-        // Fetch current streaks
-        const { data: streaks, error: streaksError } = await supabase
-          .from('streaks')
-          .select('habit_id, current_streak, longest_streak, grace_days_used_this_week')
-          .eq('user_id', userId)
-          .in('habit_id', habitIds)
-
-        if (streaksError) continue
-
-        // Fetch last 7 days of logs for context
-        const { data: recentLogs, error: logsError } = await supabase
-          .from('habit_logs')
-          .select('habit_id, log_date')
-          .eq('user_id', userId)
-          .in('habit_id', habitIds)
-          .gte('log_date', weekAgo)
-
-        if (logsError) continue
-
-        // Check idempotency — skip if message already exists for this date
+        // Skip if message already exists for tomorrow
         const { data: existing } = await supabase
-          .from('ai_messages')
-          .select('id')
-          .eq('user_id', userId)
-          .eq('message_date', targetDate)
-          .eq('message_type', 'daily')
-          .maybeSingle()
+          .from("ai_messages")
+          .select("id")
+          .eq("user_id", user.id)
+          .eq("message_date", tomorrowStr)
+          .eq("message_type", "daily")
+          .single();
 
-        if (existing) {
-          processed++
-          continue // Already generated, skip
+        if (existing) continue;
+
+        // Fetch habits with streaks
+        const { data: habits } = await supabase
+          .from("habits")
+          .select(
+            "id, name, streaks ( current_streak, longest_streak ), habit_logs ( log_date, completed )"
+          )
+          .eq("user_id", user.id)
+          .eq("is_active", true);
+
+        const habitContexts: HabitWithStreakAndLogs[] = (habits ?? []).map(
+          (h) => {
+            const streak = Array.isArray(h.streaks)
+              ? h.streaks[0]
+              : h.streaks;
+            const logs = Array.isArray(h.habit_logs) ? h.habit_logs : [];
+            const recentLogs = logs.filter(
+              (l) => l.log_date >= sevenDaysAgoStr && l.completed
+            );
+            const completedToday = logs.some(
+              (l) => l.log_date === today && l.completed
+            );
+
+            return {
+              id: h.id,
+              name: h.name,
+              current_streak: streak?.current_streak ?? 0,
+              longest_streak: streak?.longest_streak ?? 0,
+              days_completed_last_7: recentLogs.length,
+              completed_today: completedToday,
+            };
+          }
+        );
+
+        if (habitContexts.length === 0) continue;
+
+        // Generate message
+        const { text, inputTokens, outputTokens } = await generateMessage(
+          user.display_name,
+          habitContexts
+        );
+
+        // Store in ai_messages
+        await supabase.from("ai_messages").insert({
+          user_id: user.id,
+          message_date: tomorrowStr,
+          content: text,
+          message_type: "daily",
+          habit_ids_referenced: habitContexts.map((h) => h.id),
+          model_used: MODEL,
+          prompt_tokens: inputTokens,
+          completion_tokens: outputTokens,
+        });
+
+        // Send push notification if enabled
+        if (user.notification_enabled) {
+          const { data: tokens } = await supabase
+            .from("notification_tokens")
+            .select("token")
+            .eq("user_id", user.id)
+            .eq("is_active", true);
+
+          for (const t of tokens ?? []) {
+            await sendPushNotification(t.token, text);
+          }
         }
 
-        // Build prompt and generate message
-        const prompt = buildCoachingPrompt(
-          userRow as User,
-          habits as Habit[],
-          (streaks ?? []) as Streak[],
-          (recentLogs ?? []) as HabitLog[],
-          targetDate,
-        )
-
-        const messageContent = await generateCoachingMessage(prompt)
-
-        // Detect if this is a milestone message
-        const isMilestone = (streaks ?? []).some((s: Streak) =>
-          [3, 7, 14, 30, 60, 90, 180, 365].includes(s.current_streak),
-        )
-
-        // Store in ai_messages with ON CONFLICT DO NOTHING for idempotency
-        const { error: insertError } = await supabase
-          .from('ai_messages')
-          .insert({
-            user_id: userId,
-            message_date: targetDate,
-            message_type: isMilestone ? 'milestone' : 'daily',
-            content: messageContent,
-            model_used: MODEL,
-            prompt_tokens: 0, // Would need Anthropic usage data — set to 0 for now
-            completion_tokens: 0,
-          })
-          .onConflict(['user_id', 'message_date', 'message_type'])
-          .ignore()
-
-        if (!insertError) {
-          processed++
-        } else {
-          console.error(`Insert error for user ${userId}:`, insertError)
-          errors++
-        }
+        processed++;
       } catch (userErr) {
-        console.error(`Error processing user ${userId}:`, userErr)
-        errors++
+        console.error(`Error processing user ${user.id}:`, userErr);
+        errors++;
       }
     }
 
     return new Response(
       JSON.stringify({
-        success: true,
+        ok: true,
         processed,
         errors,
-        target_date: targetDate,
-        total_users: userIds.length,
+        date: tomorrowStr,
       }),
-      {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      },
-    )
+      { headers: { "Content-Type": "application/json" } }
+    );
   } catch (err) {
-    console.error('daily-coach function failed:', err)
+    console.error("daily-coach fatal error:", err);
     return new Response(
-      JSON.stringify({ success: false, error: String(err) }),
-      {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' },
-      },
-    )
+      JSON.stringify({ ok: false, error: String(err) }),
+      { status: 500, headers: { "Content-Type": "application/json" } }
+    );
   }
-})
+});
