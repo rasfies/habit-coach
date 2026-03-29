@@ -34,6 +34,9 @@ export async function createServerClient() {
           }
         },
       },
+      auth: {
+        flowType: "implicit",
+      },
     }
   );
 }

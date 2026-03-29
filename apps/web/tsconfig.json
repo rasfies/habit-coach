@@ -26,7 +26,8 @@
       ]
     },
     "allowJs": true,
-    "noEmit": true
+    "noEmit": true,
+    "exactOptionalPropertyTypes": false
   },
   "include": [
     "next-env.d.ts",

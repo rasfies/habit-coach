@@ -1,61 +1,58 @@
 "use client";
 
-import React, { useEffect } from "react";
+import React, { useEffect, useState, Suspense } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
-import posthog from "posthog-js";
-import { PostHogProvider } from "posthog-js/react";
 
 // ---------------------------------------------------------------------------
-// PostHog initialisation (client-side only)
+// PostHog — loaded lazily, client-only
 // ---------------------------------------------------------------------------
 
-if (typeof window !== "undefined" && process.env.NEXT_PUBLIC_POSTHOG_KEY) {
-  posthog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY, {
-    api_host:
-      process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://app.posthog.com",
-    capture_pageview: false, // we capture manually below
-    capture_pageleave: true,
-  });
-}
-
-function PostHogPageview() {
+function PostHogPageviewInner() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
   useEffect(() => {
-    if (pathname) {
-      let url = window.origin + pathname;
-      if (searchParams?.toString()) {
-        url = `${url}?${searchParams.toString()}`;
+    if (typeof window === "undefined") return;
+    if (!process.env.NEXT_PUBLIC_POSTHOG_KEY) return;
+
+    import("posthog-js").then(({ default: posthog }) => {
+      if (!posthog.__loaded) {
+        posthog.init(process.env.NEXT_PUBLIC_POSTHOG_KEY!, {
+          api_host:
+            process.env.NEXT_PUBLIC_POSTHOG_HOST ?? "https://app.posthog.com",
+          capture_pageview: false,
+          capture_pageleave: true,
+        });
       }
+      const url =
+        window.origin +
+        pathname +
+        (searchParams?.toString() ? `?${searchParams.toString()}` : "");
       posthog.capture("$pageview", { $current_url: url });
-    }
+    });
   }, [pathname, searchParams]);
 
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// Auth state listener
-// ---------------------------------------------------------------------------
-
-function SupabaseAuthListener() {
-  // Auth state changes are handled by server-side middleware / redirect logic.
-  // This component is a placeholder for future real-time auth sync if needed.
-  return null;
+function PostHogPageview() {
+  return (
+    <Suspense fallback={null}>
+      <PostHogPageviewInner />
+    </Suspense>
+  );
 }
 
 // ---------------------------------------------------------------------------
-// Root Providers wrapper
+// Root Providers wrapper — no third-party SSR context, just children + analytics
 // ---------------------------------------------------------------------------
 
 export function Providers({ children }: { children: React.ReactNode }) {
   return (
-    <PostHogProvider client={posthog}>
+    <>
       <PostHogPageview />
-      <SupabaseAuthListener />
       {children}
-    </PostHogProvider>
+    </>
   );
 }
 
