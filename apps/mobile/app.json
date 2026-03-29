@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "AI Habit Coach",
-    "slug": "ai-habit-coach",
+    "name": "HabitAI",
+    "slug": "habitai",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -9,23 +9,30 @@
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#FBBF24"
     },
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.habitcoach.app",
+      "bundleIdentifier": "com.habitai.app",
       "infoPlist": {
-        "NSUserNotificationsUsageDescription": "AI Habit Coach sends you reminders for your habits and streak milestone celebrations."
+        "NSUserNotificationsUsageDescription": "HabitAI sends you daily habit reminders and streak milestone celebrations.",
+        "NSPhotoLibraryUsageDescription": "HabitAI needs access to your photo library to let you set a profile avatar.",
+        "NSCameraUsageDescription": "HabitAI needs camera access to take a profile photo."
       }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#ffffff"
+        "backgroundColor": "#FBBF24"
       },
-      "package": "com.habitcoach.app",
-      "permissions": ["RECEIVE_BOOT_COMPLETED", "VIBRATE"]
+      "package": "com.habitai.app",
+      "permissions": [
+        "RECEIVE_BOOT_COMPLETED",
+        "VIBRATE",
+        "READ_MEDIA_IMAGES",
+        "READ_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -37,22 +44,33 @@
         "expo-notifications",
         {
           "icon": "./assets/notification-icon.png",
-          "color": "#ffffff"
+          "color": "#FBBF24",
+          "sounds": []
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow HabitAI to access your photos to set a profile avatar.",
+          "cameraPermission": "Allow HabitAI to use your camera to take a profile photo."
         }
       ],
       [
         "@sentry/react-native/expo",
         {
-          "organization": "habit-coach",
-          "project": "habit-coach-mobile"
+          "organization": "habit-ai",
+          "project": "habitai-mobile"
         }
       ]
     ],
-    "scheme": "habitcoach",
+    "scheme": "habitai",
     "extra": {
       "eas": {
         "projectId": "REPLACE_WITH_EAS_PROJECT_ID"
       }
+    },
+    "experiments": {
+      "typedRoutes": true
     }
   }
 }

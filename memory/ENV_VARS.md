@@ -29,6 +29,8 @@ No values are stored here — see `.env.example` for the template.
 | `NEXT_PUBLIC_APP_URL` | Web | Required | The fully qualified URL of the web application (e.g., `https://habitcoach.app` in production, `http://localhost:3000` in development). Used for generating absolute URLs in emails, OG tags, and OAuth redirect URLs. |
 | `SUPABASE_AUTH_GOOGLE_CLIENT_ID` | Supabase (config) | Required for Google OAuth | Google OAuth 2.0 Client ID. Configured in the Supabase Auth dashboard under "Google Provider". Not used directly in application code — Supabase Auth handles the OAuth flow. Must match the client ID configured in Google Cloud Console with `https://<project>.supabase.co/auth/v1/callback` as an authorized redirect URI. |
 | `SUPABASE_AUTH_GOOGLE_SECRET` | Supabase (config) | Required for Google OAuth | Google OAuth 2.0 Client Secret. Configured in the Supabase Auth dashboard. Never exposed to client code — handled entirely by Supabase Auth server-side. |
+| `EXPO_PUBLIC_API_URL` | Mobile | Required | Base URL of the Next.js web API, called by the Expo app for AI coaching messages and other server-side operations. `http://localhost:3000` in development; production Vercel URL in production. The `EXPO_PUBLIC_` prefix is required for Expo to include the variable in the client bundle. |
+| `SUPABASE_URL` | Edge Functions (Deno) | Required | Supabase project URL used inside Deno Edge Functions. Identical value to `NEXT_PUBLIC_SUPABASE_URL`. The non-prefixed form is used in the server-side Deno runtime (Edge Functions do not use Next.js env conventions). |
 
 ---
 
@@ -58,6 +60,15 @@ EXPO_PUBLIC_SUPABASE_ANON_KEY
 EXPO_PUBLIC_POSTHOG_KEY
 EXPO_PUBLIC_POSTHOG_HOST
 EXPO_PUBLIC_SENTRY_DSN
+EXPO_PUBLIC_API_URL          (Next.js API base URL for AI coaching calls)
+```
+
+### Supabase Edge Functions (`supabase/functions/`)
+
+```
+SUPABASE_URL                 (same value as NEXT_PUBLIC_SUPABASE_URL)
+SUPABASE_SERVICE_ROLE_KEY    (same value as web server-side key)
+ANTHROPIC_API_KEY            (same value as web server-side key)
 ```
 
 ### Supabase Infrastructure
@@ -116,6 +127,7 @@ eas secret:create --scope project --name EXPO_PUBLIC_SUPABASE_ANON_KEY --value <
 eas secret:create --scope project --name EXPO_PUBLIC_POSTHOG_KEY --value <value>
 eas secret:create --scope project --name EXPO_PUBLIC_POSTHOG_HOST --value <value>
 eas secret:create --scope project --name EXPO_PUBLIC_SENTRY_DSN --value <value>
+eas secret:create --scope project --name EXPO_PUBLIC_API_URL --value https://habitai.vercel.app
 ```
 
 ### Supabase Auth (Google OAuth)
