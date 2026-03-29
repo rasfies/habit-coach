@@ -25,7 +25,7 @@
     "@habit-coach/config": "*",
     "prettier": "^3.4.2",
     "turbo": "^2.3.3",
-    "typescript": "^5.7.3"
+    "typescript": "^6.0.2"
   },
   "overrides": {
     "react": "18.3.1",
