@@ -53,3 +53,47 @@ enabled = false
 port = 54327
 vector_port = 54328
 backend = "postgres"
+
+# ─── Edge Functions ───────────────────────────────────────────────────────────
+
+[functions.daily-coach]
+# Generates tomorrow's coaching messages for all active users.
+# Called via pg_cron at 23:00 UTC daily so messages are ready at start of day.
+verify_jwt = true
+
+[functions.streak-audit]
+# Recalculates streaks for all users, resets grace days on Mondays.
+# Called via pg_cron at 00:05 UTC daily (just after midnight).
+# Does not require JWT — invoked internally by pg_cron with service key.
+verify_jwt = false
+
+# ─── Cron Schedules (pg_cron) ────────────────────────────────────────────────
+# After deploying functions, register schedules in Supabase SQL editor:
+#
+#   -- Run streak-audit at 00:05 UTC every day
+#   SELECT cron.schedule(
+#     'streak-audit-daily',
+#     '5 0 * * *',
+#     $$SELECT net.http_post(
+#       url := current_setting('app.supabase_url') || '/functions/v1/streak-audit',
+#       headers := jsonb_build_object(
+#         'Content-Type', 'application/json',
+#         'Authorization', 'Bearer ' || current_setting('app.service_role_key')
+#       ),
+#       body := '{}'::jsonb
+#     )$$
+#   );
+#
+#   -- Run daily-coach at 23:00 UTC every day (generate next day's messages)
+#   SELECT cron.schedule(
+#     'daily-coach-messages',
+#     '0 23 * * *',
+#     $$SELECT net.http_post(
+#       url := current_setting('app.supabase_url') || '/functions/v1/daily-coach',
+#       headers := jsonb_build_object(
+#         'Content-Type', 'application/json',
+#         'Authorization', 'Bearer ' || current_setting('app.service_role_key')
+#       ),
+#       body := '{}'::jsonb
+#     )$$
+#   );

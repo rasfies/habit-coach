@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, "feat/*", "fix/*"]
   pull_request:
     branches: [main, develop]
 
@@ -11,24 +11,24 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  # Turbo cache token (optional — speeds up repeated builds)
   TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
   TURBO_TEAM: ${{ secrets.TURBO_TEAM }}
 
 jobs:
-  # ───────────────────────────────────────
-  # 1. Lint + Typecheck
-  # ───────────────────────────────────────
+  # ───────────────────────────────────────────────────────────────
+  # 1. Lint + Typecheck (all workspaces via Turborepo)
+  # ───────────────────────────────────────────────────────────────
   lint-typecheck:
     name: Lint & Typecheck
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 2
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -37,56 +37,41 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Lint (all workspaces)
+      - name: Lint (all packages)
         run: npx turbo run lint
 
-      - name: Typecheck (all workspaces)
+      - name: Typecheck (all packages)
         run: npx turbo run typecheck
 
-  # ───────────────────────────────────────
-  # 2. Unit & Integration Tests
-  # ───────────────────────────────────────
+  # ───────────────────────────────────────────────────────────────
+  # 2. Unit Tests (Vitest across all packages)
+  # ───────────────────────────────────────────────────────────────
   test:
     name: Unit Tests
     runs-on: ubuntu-latest
-    needs: lint-typecheck
-
-    services:
-      supabase:
-        image: supabase/postgres:15.1.0.117
-        env:
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
 
     env:
-      # Test environment variables (non-sensitive placeholders)
-      NEXT_PUBLIC_SUPABASE_URL: http://localhost:54321
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: test-anon-key
-      SUPABASE_SERVICE_ROLE_KEY: test-service-role-key
+      NEXT_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+      SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
-      NEXT_PUBLIC_POSTHOG_KEY: test-posthog-key
+      NEXT_PUBLIC_POSTHOG_KEY: placeholder-posthog-key
       NEXT_PUBLIC_POSTHOG_HOST: https://app.posthog.com
+      NEXT_PUBLIC_SENTRY_DSN: ""
+      SENTRY_DSN: ""
       NEXT_PUBLIC_APP_URL: http://localhost:3000
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
-
-      - name: Install Supabase CLI
-        run: npm install -g supabase@latest
 
       - name: Install dependencies
         run: npm ci
@@ -94,7 +79,7 @@ jobs:
       - name: Run unit tests (Vitest)
         run: npx turbo run test
 
-      - name: Upload coverage
+      - name: Upload coverage reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -102,27 +87,39 @@ jobs:
           path: |
             apps/web/coverage/
             packages/db/coverage/
+          retention-days: 7
 
-  # ───────────────────────────────────────
-  # 3. Build
-  # ───────────────────────────────────────
-  build:
-    name: Build
+  # ───────────────────────────────────────────────────────────────
+  # 3. Build — Next.js web app
+  # ───────────────────────────────────────────────────────────────
+  build-web:
+    name: Build Web (Next.js)
     runs-on: ubuntu-latest
-    needs: lint-typecheck
+    needs: [lint-typecheck]
 
     env:
-      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
-      NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY }}
-      NEXT_PUBLIC_POSTHOG_HOST: https://app.posthog.com
-      NEXT_PUBLIC_APP_URL: ${{ secrets.NEXT_PUBLIC_APP_URL }}
+      # All NEXT_PUBLIC_* vars set to empty strings for build validation.
+      # Real values are injected by Vercel at production build time.
+      NEXT_PUBLIC_SUPABASE_URL: ""
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ""
+      NEXT_PUBLIC_POSTHOG_KEY: ""
+      NEXT_PUBLIC_POSTHOG_HOST: ""
+      NEXT_PUBLIC_SENTRY_DSN: ""
+      NEXT_PUBLIC_APP_URL: ""
+      # Server-side vars — placeholders so the build doesn't crash on missing env
+      SUPABASE_SERVICE_ROLE_KEY: placeholder-service-role-key
+      ANTHROPIC_API_KEY: placeholder-anthropic-key
+      SENTRY_DSN: ""
+      SENTRY_ORG: ""
+      SENTRY_PROJECT: ""
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -131,8 +128,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build (all workspaces)
-        run: npx turbo run build
+      - name: Build web app
+        run: npx turbo run build --filter=@habit-coach/web
 
       - name: Upload Next.js build artifact
         uses: actions/upload-artifact@v4
@@ -141,20 +138,71 @@ jobs:
           path: apps/web/.next/
           retention-days: 3
 
-  # ───────────────────────────────────────
-  # 4. E2E Tests (web) — only on PRs to main
-  # ───────────────────────────────────────
-  e2e:
-    name: E2E Tests (Playwright)
+  # ───────────────────────────────────────────────────────────────
+  # 4. Mobile — typecheck + Expo bundle validation (no full EAS build)
+  # ───────────────────────────────────────────────────────────────
+  build-mobile-check:
+    name: Mobile Bundle Check (Expo)
     runs-on: ubuntu-latest
-    needs: build
-    if: github.base_ref == 'main'
+    needs: [lint-typecheck]
+
+    env:
+      EXPO_PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+      EXPO_PUBLIC_SUPABASE_ANON_KEY: placeholder-anon-key
+      EXPO_PUBLIC_POSTHOG_KEY: placeholder-posthog-key
+      EXPO_PUBLIC_POSTHOG_HOST: https://app.posthog.com
+      EXPO_PUBLIC_SENTRY_DSN: ""
+      EXPO_PUBLIC_API_URL: http://localhost:3000
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
-      - name: Setup Node.js
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck mobile app
+        run: npx turbo run typecheck --filter=@habit-coach/mobile
+
+      - name: Validate Expo bundle (web export validates bundler)
+        working-directory: apps/mobile
+        run: npx expo export --platform web --output-dir /tmp/expo-web-export
+
+  # ───────────────────────────────────────────────────────────────
+  # 5. E2E Tests — Playwright, only on PRs targeting main
+  # ───────────────────────────────────────────────────────────────
+  e2e:
+    name: E2E Tests (Playwright)
+    runs-on: ubuntu-latest
+    needs: [build-web]
+    if: github.event_name == 'pull_request' && github.base_ref == 'main'
+
+    env:
+      NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY_TEST }}
+      NEXT_PUBLIC_POSTHOG_KEY: ${{ secrets.NEXT_PUBLIC_POSTHOG_KEY }}
+      NEXT_PUBLIC_POSTHOG_HOST: https://app.posthog.com
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_SENTRY_DSN: ""
+      SENTRY_DSN: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -168,10 +216,6 @@ jobs:
 
       - name: Run E2E tests
         run: npx turbo run test:e2e --filter=@habit-coach/web
-        env:
-          PLAYWRIGHT_BASE_URL: ${{ secrets.STAGING_URL }}
-          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
-          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
 
       - name: Upload Playwright report
         if: always()
