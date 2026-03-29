@@ -1,5 +1,6 @@
 import "server-only";
 import { createServerClient as createSSRServerClient } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import type { Database } from "@habit-coach/db";
 
@@ -42,27 +43,11 @@ export async function createServerClient() {
  * NEVER expose the service key to the browser or include in client bundles.
  * Bypasses RLS — use only where intentional.
  */
-export async function createServiceRoleClient() {
-  const cookieStore = await cookies();
-
-  return createSSRServerClient<Database>(
+export function createServiceRoleClient() {
+  return createClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) => {
-              cookieStore.set(name, value, options);
-            });
-          } catch {
-            // intentionally ignored
-          }
-        },
-      },
       auth: {
         autoRefreshToken: false,
         persistSession: false,

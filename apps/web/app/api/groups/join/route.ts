@@ -83,16 +83,12 @@ export async function POST(request: Request) {
     );
   }
 
-  // Increment member_count
-  await supabase
-    .from("groups")
-    .update({ member_count: group.member_count + 1 })
-    .eq("id", group.id);
+  // Note: member_count is updated automatically by the DB trigger
+  // (group_members_count trigger on group_members INSERT/DELETE)
 
   return NextResponse.json({
     group_id: group.id,
     group_name: group.name,
-    member_count: group.member_count + 1,
     joined_at: membership?.joined_at,
   });
 }
