@@ -1,24 +1,66 @@
-import { useEffect } from "react";
-import { Stack } from "expo-router";
+import { useEffect, useState } from "react";
+import { Stack, useRouter, useSegments } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { StatusBar } from "expo-status-bar";
+import { supabase } from "@/lib/supabase";
+import type { Session } from "@supabase/supabase-js";
 
-// Keep the splash screen visible until we finish loading
 SplashScreen.preventAutoHideAsync();
 
-export default function RootLayout() {
+function useProtectedRoute(session: Session | null, isLoading: boolean) {
+  const segments = useSegments();
+  const router = useRouter();
+
   useEffect(() => {
-    // Auth check and session restoration will be implemented in TASK-025
-    SplashScreen.hideAsync();
+    if (isLoading) return;
+
+    const inAuthGroup = segments[0] === "(auth)";
+    const inTabsGroup = segments[0] === "(tabs)";
+
+    if (!session && !inAuthGroup) {
+      // No session — redirect to login
+      router.replace("/(auth)/login");
+    } else if (session && inAuthGroup) {
+      // Has session — redirect away from auth screens
+      router.replace("/(tabs)");
+    }
+  }, [session, isLoading, segments]);
+}
+
+export default function RootLayout() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useProtectedRoute(session, isLoading);
+
+  useEffect(() => {
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setIsLoading(false);
+      SplashScreen.hideAsync();
+    });
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      (_event, session) => {
+        setSession(session);
+      }
+    );
+
+    return () => subscription.unsubscribe();
   }, []);
+
+  if (isLoading) return null;
 
   return (
     <>
       <Stack>
-        {/* Auth screens — no header */}
         <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-        {/* Main tab navigator */}
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="onboarding" options={{ headerShown: false }} />
+        <Stack.Screen name="settings" options={{ title: "Settings" }} />
+        <Stack.Screen name="groups/[id]" options={{ title: "Group" }} />
       </Stack>
       <StatusBar style="auto" />
     </>
