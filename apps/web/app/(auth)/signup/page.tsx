@@ -92,35 +92,38 @@ export default function SignupPage() {
 
     setLoading(true);
     try {
-      // TODO: replace with API call — POST /api/auth/signup
-      const supabase = createClient();
-      const { data, error: authError } = await supabase.auth.signUp({
-        email: form.email,
-        password: form.password,
-        options: { data: { display_name: form.displayName.trim() } },
+      const res = await fetch("/api/auth/signup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: form.email,
+          password: form.password,
+          display_name: form.displayName.trim(),
+        }),
       });
 
-      if (authError) {
-        if (authError.message.toLowerCase().includes("already")) {
+      const json = await res.json();
+
+      if (!res.ok) {
+        if (res.status === 409) {
           setServerError("An account with this email already exists.");
         } else {
-          setServerError(authError.message);
+          setServerError(json.message ?? "Something went wrong. Please try again.");
         }
         return;
       }
 
-      if (data.user) {
-        // Insert user profile row
-        await supabase.from("users").upsert({
-          id: data.user.id,
-          email: form.email,
-          display_name: form.displayName.trim(),
-          onboarding_complete: false,
+      // If session returned, set it in the browser client
+      if (json.session) {
+        const supabase = createClient();
+        await supabase.auth.setSession({
+          access_token: json.session.access_token,
+          refresh_token: json.session.refresh_token,
         });
-
-        posthog.capture("user_signed_up", { method: "email" });
-        router.push("/onboarding");
       }
+
+      posthog.capture("user_signed_up", { method: "email" });
+      router.push("/onboarding");
     } catch {
       setServerError("Something went wrong. Please try again.");
     } finally {
