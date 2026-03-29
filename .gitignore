@@ -72,3 +72,4 @@ ios/
 
 # Generated files (keep the template, not the generated output)
 packages/db/src/database.generated.ts
+apps/web/.env.local

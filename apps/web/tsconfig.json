@@ -2,7 +2,11 @@
   "extends": "../../packages/config/typescript/base.json",
   "compilerOptions": {
     "target": "ES2017",
-    "lib": ["dom", "dom.iterable", "esnext"],
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
     "jsx": "preserve",
     "incremental": true,
     "plugins": [
@@ -11,11 +15,26 @@
       }
     ],
     "paths": {
-      "@/*": ["./*"],
-      "@habit-coach/ui": ["../../packages/ui/src/index.ts"],
-      "@habit-coach/db": ["../../packages/db/src/index.ts"]
-    }
+      "@/*": [
+        "./*"
+      ],
+      "@habit-coach/ui": [
+        "../../packages/ui/src/index.ts"
+      ],
+      "@habit-coach/db": [
+        "../../packages/db/src/index.ts"
+      ]
+    },
+    "allowJs": true,
+    "noEmit": true
   },
-  "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules"]
+  "include": [
+    "next-env.d.ts",
+    "**/*.ts",
+    "**/*.tsx",
+    ".next/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }
